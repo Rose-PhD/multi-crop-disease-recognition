@@ -11,8 +11,11 @@ Includes:
  - Disease prediction using predicted crop slice and true crop slice (oracle)
 """
 
-import os
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import os
 
 import pandas as pd
 

@@ -8,15 +8,33 @@ This repository implements two CNN-based pipelines — a **flat classifier** and
 
 ```
 multi-crop-disease-recognition/
-├── utils.py            # Shared models, datasets, transforms, and utilities (single source of truth)
-├── train_flat.py       # Train the flat (joint) classifier
-├── test_flat.py        # Test the flat classifier on held-out regions
-├── train_hier.py       # Train the hierarchical classifier
-├── test_hier.py        # Test the hierarchical classifier on held-out regions
-└── train_hier.slurm    # SLURM job script for HPC submission
+├── utils/                  # Shared package — single source of truth for all pipelines
+│   ├── __init__.py         #   re-exports every public symbol
+│   ├── seeding.py          #   SEED, seed_worker, g, safe_collate
+│   ├── transforms.py       #   make_train/eval/val/test_transform
+│   ├── datasets.py         #   IMG_EXTS, build_index, HierDataset, RegionDataset
+│   ├── models.py           #   FlatResNet18, HierResNet18Concat
+│   ├── label_maps.py       #   load_label_maps, build_region_items
+│   └── metrics.py          #   plot_cm, fmt_mean_std, compute_region_stats, save_region_tables
+├── flat/                   # Flat (joint) classifier pipeline
+│   ├── train_flat.py       #   training: 5-fold CV with FlatResNet18
+│   └── test_flat.py        #   testing: multi-region evaluation
+├── hier/                   # Hierarchical classifier pipeline
+│   ├── train_hier.py       #   training: 5-fold CV with HierResNet18Concat
+│   └── test_hier.py        #   testing: multi-region evaluation
+└── train_hier.slurm        # SLURM job script for HPC submission
 ```
 
-All four scripts import from `utils.py`. Functions shared across two or more scripts are defined once there and not repeated elsewhere.
+Scripts in `flat/` and `hier/` add the project root to `sys.path` at startup so
+`from utils import ...` resolves correctly regardless of invocation directory:
+
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+```
+
+Functions shared across pipelines are defined once in `utils/` and not repeated elsewhere.
 
 ---
 

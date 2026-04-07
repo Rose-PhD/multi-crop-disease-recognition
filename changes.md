@@ -201,3 +201,100 @@ per_crop_results[ci_true]["pred"].append(gi_pred_true_crop) # true-crop slice in
 | Copies of `build_region_items`| 2      | 1     |
 | Copies of region stats block  | 2      | 1     |
 | Copies of table gen block     | 2      | 1     |
+
+---
+
+## Refactor: `utils.py` → `utils/` package
+
+`utils.py` (single ~500-line file) was broken into a proper Python package with
+one focused module per concern. The flat file was deleted.
+
+### New structure
+
+```
+utils/
+├── __init__.py     # re-exports all public symbols for backward-compatible imports
+├── seeding.py      # SEED, seed_worker, g, safe_collate
+├── transforms.py   # make_train_transform, make_eval_transform and aliases
+├── datasets.py     # IMG_EXTS, build_index, HierDataset, RegionDataset
+├── models.py       # FlatResNet18, HierResNet18Concat, shared backbone loader
+├── label_maps.py   # load_label_maps, build_region_items
+└── metrics.py      # plot_cm, fmt_mean_std, compute_region_stats, save_region_tables
+```
+
+### What changed in each submodule
+
+**`seeding.py`**
+- Contains only the SEED constant, global seed setup, `seed_worker`, `g` generator,
+  and `safe_collate`. Seeds are applied at import time, matching original behaviour.
+
+**`transforms.py`**
+- Extracts `_IMAGENET_MEAN` and `_IMAGENET_STD` as module-level constants to avoid
+  repeating the magic numbers across the two transform functions.
+- `make_val_transform` and `make_test_transform` remain as aliases of `make_eval_transform`.
+
+**`datasets.py`**
+- Owns `IMG_EXTS` (used by both `build_index` and `build_region_items`).
+- `label_maps.py` imports `IMG_EXTS` from here via a relative import to avoid duplication.
+
+**`models.py`**
+- Extracts the identical backbone loading try/except into a private `_load_resnet18_backbone()`
+  helper, removing the last internal duplication between `FlatResNet18` and `HierResNet18Concat`.
+
+**`label_maps.py`**
+- `build_region_items` imports `IMG_EXTS` from `.datasets` rather than redefining it.
+
+**`metrics.py`**
+- `compute_region_stats` now iterates over a `metric_cols` list instead of expanding
+  each column by hand, reducing the repetitive mean/std pairs from 18 lines to a loop.
+
+### Backward compatibility
+
+`utils/__init__.py` re-exports every public name via `__all__`, so all four scripts
+(`train_flat.py`, `train_hier.py`, `test_flat.py`, `test_hier.py`) continue to use
+`from utils import ...` without modification.
+
+---
+
+## Reorganisation: pipeline folders `flat/` and `hier/`
+
+The four pipeline scripts were moved from the project root into two focused subdirectories.
+
+### New layout
+
+```
+flat/
+├── train_flat.py
+└── test_flat.py
+
+hier/
+├── train_hier.py
+└── test_hier.py
+```
+
+The old root-level `train_flat.py`, `test_flat.py`, `train_hier.py`, `test_hier.py`
+were deleted.
+
+### How imports are fixed
+
+Each script inserts the project root into `sys.path` before any other import so that
+`from utils import ...` resolves to the `utils/` package at the project root:
+
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+```
+
+`Path(__file__).resolve().parent.parent` evaluates to the project root at runtime,
+making the path independent of the working directory used to invoke the script.
+
+### How to run
+
+```bash
+# from project root or anywhere
+python flat/train_flat.py
+python flat/test_flat.py
+python hier/train_hier.py
+python hier/test_hier.py
+```

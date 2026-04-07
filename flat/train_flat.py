@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 """
-TRAINING: FULLY HIERARCHICAL RESNET-18 (OPTION C CONCATENATED HEADS)
-- Fully hierarchical + concatenated disease heads
-- Two-stage (crop -> disease slice) in BOTH training and evaluation
-- Fine-tune last block (layer4)
+TRAINING: FLAT RESNET-18 BASELINE (JOINT CROP+DISEASE LABELS)
+
+- Same dataset and CV protocol as hierarchical ResNet-18
+- Treat each (crop, disease) pair as a single atomic class
+- Single linear classifier over K joint classes
 - 5-fold CV
-- Confusion matrices + CSV summaries + label maps for testing
+- Confusion matrices + CSV summaries
+
+Improvements:
+- StratifiedKFold now uses JOINT class labels, not crop labels only
+- Separate train and validation transforms
 """
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
 import json
-from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 import torch
@@ -29,16 +38,16 @@ from utils import (
     build_index,
     plot_cm,
     HierDataset,
-    HierResNet18Concat,
+    FlatResNet18,
 )
 
 
 # ============================================================
 #                       EVALUATION
-#         (TWO-STAGE: crop -> disease slice -> global ID)
+#       (FLAT JOINT PREDICTION + HIERARCHICAL METRICS)
 # ============================================================
-def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labels,
-             global_index):
+def evaluate(model, model_path, val_loader, device, fold_dir,
+             crops, global_labels, global_to_crop_dis, crop_to_global_ids):
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
@@ -55,30 +64,28 @@ def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labe
             imgs, yc, yd, yg = batch
             imgs = imgs.to(device)
             yc = yc.to(device)
-            yd = yd.to(device)
             yg = yg.to(device)
 
-            out_crop, out_dis = model(imgs)
-            pred_c = out_crop.argmax(1)
+            logits = model(imgs)
+            preds = logits.argmax(dim=1)
 
             for i in range(imgs.size(0)):
-                ci_pred = int(pred_c[i].item())
-                ci_true = int(yc[i].item())
-                di_true = int(yd[i].item())
+                gi_true = int(yg[i].item())
+                gi_pred = int(preds[i].item())
 
-                start_pred, end_pred = model.crop_slices[ci_pred]
-                local_pred_pred_crop = int(out_dis[i, start_pred:end_pred].argmax().item())
-                global_pred_pred_crop = global_index[(ci_pred, local_pred_pred_crop)]
+                ci_true, di_true = global_to_crop_dis[gi_true]
+                ci_pred, di_pred = global_to_crop_dis[gi_pred]
 
-                start_true, end_true = model.crop_slices[ci_true]
-                local_pred_true_crop = int(out_dis[i, start_true:end_true].argmax().item())
-                global_pred_true_crop = global_index[(ci_true, local_pred_true_crop)]
-
+                true_global.append(gi_true)
+                pred_global.append(gi_pred)
                 true_crop.append(ci_true)
                 pred_crop.append(ci_pred)
-                true_global.append(int(yg[i].item()))
-                pred_global.append(global_pred_pred_crop)
-                pred_global_true_crop.append(global_pred_true_crop)
+
+                crop_global_ids = crop_to_global_ids[ci_true]
+                logits_i = logits[i]
+                crop_logits = torch.stack([logits_i[g_id] for g_id in crop_global_ids], dim=0)
+                local_pred_idx = int(crop_logits.argmax().item())
+                pred_global_true_crop.append(int(crop_global_ids[local_pred_idx]))
 
     crop_acc = accuracy_score(true_crop, pred_crop)
     disease_acc_pred_crop = accuracy_score(true_global, pred_global)
@@ -90,7 +97,7 @@ def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labe
 
     cm_dis = confusion_matrix(true_global, pred_global, labels=range(len(global_labels)))
     plot_cm(cm_dis, global_labels, fold_dir / "cm_disease_pred_crop.png",
-            "Disease Confusion Matrix (Pred Crop Slice)")
+            "Disease Confusion Matrix (Pred Joint Class)")
     pd.DataFrame(cm_dis, index=global_labels, columns=global_labels).to_csv(
         fold_dir / "cm_disease_pred_crop.csv"
     )
@@ -98,7 +105,7 @@ def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labe
     cm_dis_oracle = confusion_matrix(true_global, pred_global_true_crop,
                                      labels=range(len(global_labels)))
     plot_cm(cm_dis_oracle, global_labels, fold_dir / "cm_disease_true_crop.png",
-            "Disease Confusion Matrix (True Crop Slice)")
+            "Disease Confusion Matrix (Oracle Crop Mask)")
     pd.DataFrame(cm_dis_oracle, index=global_labels, columns=global_labels).to_csv(
         fold_dir / "cm_disease_true_crop.csv"
     )
@@ -120,10 +127,9 @@ def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labe
 
 # ============================================================
 #                        TRAINING
-#       (TWO-STAGE HIERARCHICAL LOSS WITH CONCATENATED HEADS)
 # ============================================================
-def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
-               global_labels, global_index):
+def train_fold(fold, model, train_loader, val_loader, device, fold_dir,
+               crops, global_labels, global_to_crop_dis, crop_to_global_ids):
     criterion = nn.CrossEntropyLoss()
     optimizer = Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
 
@@ -141,25 +147,11 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
                 continue
             imgs, yc, yd, yg = batch
             imgs = imgs.to(device)
-            yc = yc.to(device)
-            yd = yd.to(device)
+            yg = yg.to(device)
 
             optimizer.zero_grad()
-            out_crop, out_dis = model(imgs)
-
-            loss_crop = criterion(out_crop, yc)
-
-            loss_dis = 0.0
-            batch_size = imgs.size(0)
-            for i in range(batch_size):
-                ci_true = int(yc[i].item())
-                di_true = yd[i].unsqueeze(0)
-                start, end = model.crop_slices[ci_true]
-                slice_logits = out_dis[i, start:end].unsqueeze(0)
-                loss_dis = loss_dis + criterion(slice_logits, di_true)
-            loss_dis = loss_dis / batch_size
-
-            loss = loss_crop + loss_dis
+            logits = model(imgs)
+            loss = nn.CrossEntropyLoss()(logits, yg)
             loss.backward()
             optimizer.step()
             total_train += loss.item()
@@ -172,23 +164,9 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
                     continue
                 imgs, yc, yd, yg = batch
                 imgs = imgs.to(device)
-                yc = yc.to(device)
-                yd = yd.to(device)
-
-                out_crop, out_dis = model(imgs)
-                loss_crop_val = criterion(out_crop, yc)
-
-                loss_dis_val = 0.0
-                batch_size = imgs.size(0)
-                for i in range(batch_size):
-                    ci_true = int(yc[i].item())
-                    di_true = yd[i].unsqueeze(0)
-                    start, end = model.crop_slices[ci_true]
-                    slice_logits = out_dis[i, start:end].unsqueeze(0)
-                    loss_dis_val = loss_dis_val + criterion(slice_logits, di_true)
-                loss_dis_val = loss_dis_val / batch_size
-
-                total_val += (loss_crop_val + loss_dis_val).item()
+                yg = yg.to(device)
+                logits = model(imgs)
+                total_val += criterion(logits, yg).item()
 
         print(f"[Fold {fold}] Epoch {epoch} | Train: {total_train:.4f} | Val: {total_val:.4f}")
 
@@ -205,7 +183,7 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
 
     eval_summary = evaluate(
         model, model_path, val_loader, device, fold_dir,
-        crops, global_labels, global_index
+        crops, global_labels, global_to_crop_dis, crop_to_global_ids
     )
 
     summary = {"fold": fold, "best_val_loss": best_loss, **eval_summary}
@@ -218,7 +196,7 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
 # ============================================================
 def main():
     DATASET = "/deepstore/datasets/dmb/ComputerVision/biology/training7"
-    SAVE_ROOT = "/home/nalwangar/finally/logs_hierM"
+    SAVE_ROOT = "/home/nalwangar/finally/logs_flatM"
     os.makedirs(SAVE_ROOT, exist_ok=True)
 
     crops, diseases_by_crop, items = build_index(DATASET)
@@ -234,6 +212,14 @@ def main():
             global_index[(ci, di)] = idx
             labels.append(f"{crop}:{dis}")
             idx += 1
+
+    num_joint_classes = idx
+    print(f"Total joint (crop, disease) classes: {num_joint_classes}")
+
+    global_to_crop_dis = {gid: (ci, di) for (ci, di), gid in global_index.items()}
+    crop_to_global_ids = {}
+    for (ci, di), gid in global_index.items():
+        crop_to_global_ids.setdefault(ci, []).append(gid)
 
     global_labels = labels
     joint_labels = [global_index[(c, d)] for _, c, d in items]
@@ -263,19 +249,19 @@ def main():
             collate_fn=safe_collate, worker_init_fn=seed_worker, generator=g
         )
 
-        model = HierResNet18Concat(crops, diseases_by_crop).to(device)
+        model = FlatResNet18(num_joint_classes=num_joint_classes).to(device)
 
         fold_dir = Path(SAVE_ROOT) / f"fold{fold}"
         fold_dir.mkdir(parents=True, exist_ok=True)
 
         summary = train_fold(
             fold, model, train_loader, val_loader, device,
-            fold_dir, crops, global_labels, global_index
+            fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids
         )
         fold_results.append(summary)
 
     pd.DataFrame(fold_results).to_csv(f"{SAVE_ROOT}/summary_all_folds.csv", index=False)
-    print("\n=== TRAINING COMPLETE: FULLY HIERARCHICAL OPTION C (CONCATENATED HEADS) ===")
+    print("\n=== TRAINING COMPLETE: FLAT RESNET-18 BASELINE ===")
 
 
 if __name__ == "__main__":
