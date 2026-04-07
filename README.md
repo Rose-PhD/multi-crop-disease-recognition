@@ -8,12 +8,15 @@ This repository implements two CNN-based pipelines — a **flat classifier** and
 
 ```
 multi-crop-disease-recognition/
+├── utils.py            # Shared models, datasets, transforms, and utilities (single source of truth)
 ├── train_flat.py       # Train the flat (joint) classifier
 ├── test_flat.py        # Test the flat classifier on held-out regions
 ├── train_hier.py       # Train the hierarchical classifier
 ├── test_hier.py        # Test the hierarchical classifier on held-out regions
 └── train_hier.slurm    # SLURM job script for HPC submission
 ```
+
+All four scripts import from `utils.py`. Functions shared across two or more scripts are defined once there and not repeated elsewhere.
 
 ---
 
@@ -28,141 +31,13 @@ multi-crop-disease-recognition/
 
 ---
 
-## File-by-File Function Reference
+## Shared Utilities — `utils.py`
 
----
+Everything listed here is defined once and imported by whichever scripts need it.
 
-### `train_flat.py` — Train Flat Classifier
+### Reproducibility
 
-**Purpose**: Treats every (crop, disease) pair as a single atomic class and trains a ResNet-18 with a single linear head over all joint classes, using 5-fold cross-validation.
-
-| Function / Class        | Signature                                                                                                                           | What It Does                                                                                                                                                                                                                                                                                   |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `seed_worker`           | `seed_worker(worker_id)`                                                                                                            | Sets NumPy and Python `random` seeds per DataLoader worker to ensure reproducibility across folds.                                                                                                                                                                                             |
-| `safe_collate`          | `safe_collate(batch)`                                                                                                               | Filters out `None` samples (caused by corrupt/missing images) before collating a batch.                                                                                                                                                                                                        |
-| `FlatResNet18`          | `class FlatResNet18(nn.Module)`                                                                                                     | ResNet-18 with a single `nn.Linear(512, num_classes)` head. Freezes all layers except `layer4` and the head. `num_classes` = total number of unique (crop, disease) pairs.                                                                                                                     |
-| `HierDataset`           | `class HierDataset(Dataset)`                                                                                                        | PyTorch Dataset that reads images from a `crop/disease/image` directory tree and returns `(img_tensor, crop_id, local_disease_id, global_joint_id)`.                                                                                                                                           |
-| `make_train_transform`  | `make_train_transform()`                                                                                                            | Returns a `torchvision.transforms` pipeline with `RandomHorizontalFlip`, `RandomVerticalFlip`, resize to 224×224, and ImageNet normalisation. Used during training.                                                                                                                            |
-| `make_val_transform`    | `make_val_transform()`                                                                                                              | Same as above but without any random augmentations. Used during validation/evaluation.                                                                                                                                                                                                         |
-| `build_index`           | `build_index(dataset_root)`                                                                                                         | Walks the dataset directory tree to collect `(img_path, crop_id, local_dis_id, global_joint_id)` for every image. Builds and returns dictionaries: `crops`, `global_labels`, `global_to_crop_dis`, `crop_to_global_ids`, and the flat `items` list.                                            |
-| `plot_confusion_matrix` | `plot_confusion_matrix(cm, labels, save_path, title)`                                                                               | Saves a colour-mapped confusion matrix PNG using Matplotlib. Row = true label, column = predicted label.                                                                                                                                                                                       |
-| `evaluate`              | `evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids)`           | Loads model weights from `model_path`, runs inference on `val_loader`, computes: (1) crop accuracy, (2) joint disease accuracy using the predicted joint class, (3) oracle-crop disease accuracy (restricts logits to the true crop's classes). Saves confusion matrices and a `summary.json`. |
-| `train_fold`            | `train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids)` | Trains for up to 50 epochs with Adam (lr=1e-4, weight_decay=1e-4) and StepLR scheduler (step=10, gamma=0.5). Uses early stopping with patience=7 on validation loss. Saves `best_model.pt` and calls `evaluate` at the end of the fold.                                                        |
-| `main`                  | `main()`                                                                                                                            | Entry point. Calls `build_index`, creates stratified 5-fold splits (stratified on global joint label), instantiates a fresh `FlatResNet18` per fold, runs `train_fold` for each, and writes aggregated results CSV and label maps JSON.                                                        |
-
----
-
-### `test_flat.py` — Test Flat Classifier
-
-**Purpose**: Loads the trained flat model checkpoints (one per fold) and evaluates them on held-out geographic regions (testA, testB, testC, testD, …).
-
-| Function / Class       | Signature                                                                                                                         | What It Does                                                                                                                                                                                                           |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FlatResNet18`         | `class FlatResNet18(nn.Module)`                                                                                                   | Identical architecture to `train_flat.py`. Must match exactly to load weights.                                                                                                                                         |
-| `make_test_transform`  | `make_test_transform()`                                                                                                           | Returns no-augmentation transform (resize + normalise).                                                                                                                                                                |
-| `safe_collate`         | `safe_collate(batch)`                                                                                                             | Filters `None` samples from a batch (same as training).                                                                                                                                                                |
-| `RegionFlatDataset`    | `class RegionFlatDataset(Dataset)`                                                                                                | Dataset for a single test region. Assigns `global_joint_id = -1` for diseases not seen during training (unknown diseases). Returns `(img_tensor, crop_id, local_disease_id, global_joint_id)`.                         |
-| `load_label_maps`      | `load_label_maps(model_root)`                                                                                                     | Reads `label_maps.json` saved during training to recover `crops`, `disease_labels`, and the `global_index` mapping. This ensures test label encoding matches training.                                                 |
-| `build_region_items`   | `build_region_items(region_root, train_crops, train_dis, global_index)`                                                           | Walks the region directory tree. Skips images whose crop or disease was not seen in training. Returns flat items list and a set of unknown (unseen) disease names for diagnostics.                                     |
-| `plot_cm`              | `plot_cm(cm, labels, save_path, title)`                                                                                           | Saves confusion matrix PNG (same as training equivalent).                                                                                                                                                              |
-| `evaluate_region_fold` | `evaluate_region_fold(model, model_path, loader, device, fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids)` | Loads fold checkpoint, runs inference, computes crop accuracy, joint disease accuracy (pred-crop), oracle-crop disease accuracy, and per-crop disease accuracies. Saves confusion matrices and returns a results dict. |
-| `main`                 | `main()`                                                                                                                          | Iterates over every test region × every fold. Aggregates per-region statistics (mean/std across folds) and writes them to a combined CSV.                                                                              |
-
----
-
-### `train_hier.py` — Train Hierarchical Classifier
-
-**Purpose**: Trains a two-stage hierarchical model. The backbone produces a feature vector that feeds both a crop classification head and a set of per-crop disease heads whose logits are concatenated into a single vector.
-
-| Function / Class        | Signature                                                                                   | What It Does                                                                                                                                                                                                                                                                                                                                                                                                |
-| ----------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `seed_worker`           | `seed_worker(worker_id)`                                                                    | Same as `train_flat.py`.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `safe_collate`          | `safe_collate(batch)`                                                                       | Same as `train_flat.py`.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `HierResNet18Concat`    | `class HierResNet18Concat(nn.Module)`                                                       | ResNet-18 backbone shared between two heads: (1) **crop_head**: `Linear(512, num_crops)` — predicts crop type; (2) **dis_heads**: `nn.ModuleList` of per-crop `Linear(512, num_diseases_for_crop)` heads whose outputs are concatenated. `crop_slices` dict maps each `crop_id` to its `(start, end)` index range in the concatenated disease logits. Returns `(crop_logits, concatenated_disease_logits)`. |
-| `HierDataset`           | `class HierDataset(Dataset)`                                                                | Same as `train_flat.py`.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `make_train_transform`  | `make_train_transform()`                                                                    | Same as `train_flat.py`.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `make_eval_transform`   | `make_eval_transform()`                                                                     | Same as `make_val_transform` in `train_flat.py`.                                                                                                                                                                                                                                                                                                                                                            |
-| `build_index`           | `build_index(dataset_root)`                                                                 | Same as `train_flat.py`.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `plot_confusion_matrix` | `plot_confusion_matrix(cm, labels, save_path, title)`                                       | Same as `train_flat.py`.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `evaluate`              | `evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labels)`           | Two-stage inference: (1) crop logits → predicted crop; (2) predicted-crop slice of disease logits → predicted disease. Also computes oracle-crop disease accuracy (uses true crop slice instead of predicted crop slice). Saves confusion matrices and summary JSON.                                                                                                                                        |
-| `train_fold`            | `train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops, global_labels)` | Hierarchical training loss: `total_loss = crop_loss + disease_loss`. For `disease_loss`, only the slice of the concatenated logits belonging to the **true crop** is passed through `CrossEntropyLoss` against the local disease label. This prevents gradients from leaking between crop-specific heads. Uses the same Adam + StepLR + early stopping scheme as `train_flat.py`.                           |
-| `main`                  | `main()`                                                                                    | Same structure as `train_flat.py` but instantiates `HierResNet18Concat` and saves label maps + `crop_slices` for the test script.                                                                                                                                                                                                                                                                           |
-
----
-
-### `test_hier.py` — Test Hierarchical Classifier
-
-**Purpose**: Loads trained hierarchical model checkpoints and evaluates on held-out regions using the same two-stage inference as training.
-
-| Function / Class       | Signature                                                                                 | What It Does                                                                                                                                                                                                          |
-| ---------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `safe_collate`         | `safe_collate(batch)`                                                                     | Same as other files.                                                                                                                                                                                                  |
-| `HierResNet18Concat`   | `class HierResNet18Concat(nn.Module)`                                                     | Identical architecture to `train_hier.py`. Must match exactly to load weights.                                                                                                                                        |
-| `make_test_transforms` | `make_test_transforms()`                                                                  | No-augmentation transform (resize + normalise).                                                                                                                                                                       |
-| `RegionHierDataset`    | `class RegionHierDataset(Dataset)`                                                        | Same as `RegionFlatDataset` in `test_flat.py` but used with the hierarchical model.                                                                                                                                   |
-| `load_label_maps`      | `load_label_maps(model_root)`                                                             | Reads `label_maps.json` and also recovers `crop_slices` so the test-time two-stage inference uses the same index ranges as training.                                                                                  |
-| `build_region_items`   | `build_region_items(region_root, train_crops, train_dis, global_index)`                   | Same as `test_flat.py`.                                                                                                                                                                                               |
-| `plot_cm`              | `plot_cm(cm, labels, save_path, title)`                                                   | Same as `test_flat.py`.                                                                                                                                                                                               |
-| `evaluate_region_fold` | `evaluate_region_fold(model, model_path, loader, device, fold_dir, crops, global_labels)` | Two-stage test inference: Stage 1 predicts crop; Stage 2 predicts disease from (a) predicted-crop slice and (b) true-crop slice (oracle). Computes per-crop disease accuracies from the predicted-crop slice results. |
-| `main`                 | `main()`                                                                                  | Same structure as `test_flat.py` — iterates all regions × folds, aggregates statistics, writes CSV.                                                                                                                   |
-
----
-
-## Possible Errors
-
-### ERROR-01 — Per-Crop Disease Accuracy Uses Unconstrained Flat Prediction (CRITICAL)
-
-**File**: [test_flat.py:328](test_flat.py#L328)
-
-**Buggy code**:
-
-```python
-per_crop_results[ci_true]["true"].append(gi_true)
-per_crop_results[ci_true]["pred"].append(gi_pred)       # <-- BUG
-```
-
-**What goes wrong**: `gi_pred` is the flat model's argmax over **all** joint classes — it can be a joint class from any crop (e.g., predicting "wheat*rust" when the true crop is "maize"). Storing it under `ci_true` and then computing per-crop disease accuracy mixes prediction spaces: the true label is constrained to crop A's disease space, but the prediction can be from crop B, C, etc. This makes every `disease*{crop_name}` metric in the output CSV meaningless and artificially deflated.
-
-**Why results look "the same"**: Because `gi_pred` often falls into a dominant class regardless of the true crop, causing per-crop accuracies to collapse toward a common wrong value across different crops.
-
-**Fix**:
-
-```python
-per_crop_results[ci_true]["true"].append(gi_true)
-per_crop_results[ci_true]["pred"].append(gi_pred_true_crop)   # oracle-crop prediction (already computed on line 324)
-```
-
-`gi_pred_true_crop` is already computed two lines above (line 324) by restricting the flat logits to only the classes that belong to `ci_true`. Use that instead.
-
----
-
-### ERROR-02 — Per-Crop Disease Accuracy Uses Predicted-Crop Slice Instead of True-Crop Slice (MODERATE)
-
-**File**: [test_hier.py:340](test_hier.py#L340)
-
-**Buggy code**:
-
-```python
-per_crop_results[ci_true]["true"].append(gi_true)
-per_crop_results[ci_true]["pred"].append(gi_pred_pred_crop)   # <-- inconsistency
-```
-
-**What goes wrong**: `gi_pred_pred_crop` is the disease prediction taken from the **predicted crop's slice** of the concatenated disease logits. But `gi_true` is a global index within the **true crop's slice**. When the crop prediction is wrong, the two indices refer to entirely different disease spaces, making the comparison nonsensical. The per-crop `disease_{crop_name}` metrics in the CSV therefore reflect a blend of "model was right about crop AND disease" rather than "given the true crop, how well did the disease head perform".
-
-**Fix**:
-
-```python
-per_crop_results[ci_true]["true"].append(gi_true)
-per_crop_results[ci_true]["pred"].append(gi_pred_true_crop)   # oracle-crop prediction (already computed on line 333)
-```
-
-`gi_pred_true_crop` is already computed on line 333 by reading the true-crop slice. Swapping to it makes the per-crop metric measure pure disease-head performance within the correct crop space, matching the `disease_acc_true_crop` (oracle) column in the summary.
-
----
-
-## Reproducibility Settings
-
-All scripts use `SEED = 42` with the following pattern:
+`SEED = 42` is set at module level. All scripts inherit it via `from utils import SEED`.
 
 ```python
 random.seed(SEED)
@@ -173,7 +48,189 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 ```
 
-DataLoader workers are seeded via `seed_worker` + a `torch.Generator` with the same seed to ensure deterministic data ordering across runs.
+DataLoader workers are seeded via `seed_worker` and a `torch.Generator` (`g`) initialised with the same seed.
+
+| Name            | Signature               | What It Does                                                                                          |
+| --------------- | ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `seed_worker`   | `seed_worker(worker_id)` | Sets NumPy and Python `random` seeds per DataLoader worker for reproducible data ordering.           |
+| `g`             | `torch.Generator`       | A seeded generator passed to `DataLoader` so shuffle order is deterministic.                         |
+| `safe_collate`  | `safe_collate(batch)`   | Filters `None` entries caused by corrupted/missing images before collating a batch.                  |
+
+---
+
+### Transforms
+
+`make_val_transform` and `make_test_transform` are aliases of the same underlying `make_eval_transform` function.
+
+| Name                  | Used by                        | What It Does                                                                          |
+| --------------------- | ------------------------------ | ------------------------------------------------------------------------------------- |
+| `make_train_transform` | `train_flat`, `train_hier`    | Resize to 224×224, `RandomHorizontalFlip`, `RandomVerticalFlip`, ToTensor, ImageNet normalise. |
+| `make_eval_transform`  | —                             | Resize to 224×224, ToTensor, ImageNet normalise. No augmentation.                    |
+| `make_val_transform`   | `train_flat`, `train_hier`    | Alias of `make_eval_transform`. Used at validation time during training.              |
+| `make_test_transform`  | `test_flat`, `test_hier`      | Alias of `make_eval_transform`. Used at inference time during testing.                |
+
+---
+
+### Data Index Builder
+
+| Function      | Signature                   | What It Does                                                                                                                              |
+| ------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `build_index` | `build_index(dataset_root)` | Walks `dataset_root/<crop>/<disease>/<images>`. Returns `crops` (sorted list), `diseases_by_crop` (dict), and `items` list of `(img_path, crop_idx, disease_idx)`. |
+
+---
+
+### Confusion Matrix Plotter
+
+| Function  | Signature                                  | What It Does                                                                                |
+| --------- | ------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `plot_cm` | `plot_cm(cm, labels, save_path, title)`    | Saves a colour-mapped confusion matrix PNG at 300 dpi. Row = true label, column = predicted. |
+
+---
+
+### Datasets
+
+| Class           | Used by                             | What It Does                                                                                                                                                                               |
+| --------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HierDataset`   | `train_flat`, `train_hier`          | Training dataset. Takes `items` of `(img_path, crop_id, dis_id)` and a `global_map` dict. Returns `(img, crop_id, dis_id, global_joint_id)`. Skips corrupted images by returning `None`. |
+| `RegionDataset` | `test_flat`, `test_hier`            | Test/region dataset. Takes `items` of `(img_path, crop_id, dis_local, global_joint_id)` where `global_joint_id = -1` for unknown diseases. Returns the same 4-tuple with the image tensor. |
+
+> `HierDataset` was refactored to accept `global_map` as a constructor argument instead of relying on a module-level global variable. Pass `global_index` at the `DataLoader` call site.
+
+---
+
+### Models
+
+#### `FlatResNet18` — used by `train_flat`, `test_flat`
+
+ResNet-18 with a single `nn.Linear(512, num_joint_classes)` head over all (crop, disease) joint classes. All layers except `layer4` and the head are frozen.
+
+```
+Input image → ResNet-18 backbone (layer4 trainable) → Linear(512, K) → joint logits
+```
+
+#### `HierResNet18Concat` — used by `train_hier`, `test_hier`
+
+ResNet-18 backbone shared between two heads:
+
+1. **`crop_head`**: `Linear(512, num_crops)` — predicts crop type.
+2. **`heads`**: `nn.ModuleList` of per-crop `Linear(512, n_diseases_for_crop)` heads whose outputs are concatenated into a single disease logit vector of length `sum(n_diseases_per_crop)`.
+
+`crop_slices` maps each `crop_id → (start, end)` into the concatenated disease vector, enabling the training and inference two-stage logic.
+
+```
+Input image → ResNet-18 backbone → crop_head  → crop logits
+                                 → heads[0..C] → concat → disease logits
+```
+
+---
+
+### Test-Script Utilities
+
+| Function / Name          | Signature                                                          | What It Does                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `load_label_maps`        | `load_label_maps(model_root)`                                      | Reads `label_maps.json` saved during training. Returns `crops`, `diseases_by_crop`, `global_index`, `global_labels`, `global_to_crop_dis`, `crop_to_global_ids`.          |
+| `build_region_items`     | `build_region_items(region_root, train_crops, train_dis, global_index)` | Walks a test-region directory. Skips unknown crops; marks unknown diseases with `global_joint_id = -1`. Returns `items` list and a `stats` dict of image counts.      |
+| `fmt_mean_std`           | `fmt_mean_std(mean_val, std_val)`                                  | Formats a mean ± std pair as a string (e.g. `"0.874 ± 0.012"`). Returns `None` if the mean is `None` or NaN.                                                             |
+| `compute_region_stats`   | `compute_region_stats(region, crops, df_region, stats)`            | Aggregates per-fold metrics in `df_region` into region-level mean/std for crop accuracy, disease accuracy (pred-crop and oracle-crop), F1 scores, and per-crop disease accuracy. |
+| `save_region_tables`     | `save_region_tables(region, crops, df_region, region_stats, region_save)` | Writes `table1_global_metrics.csv` (P1 crop acc, P2 per-crop disease acc, P3 global disease acc) and `table2_per_crop_metrics.csv` (per-crop breakdown) to `region_save`. |
+
+---
+
+## Per-File Function Reference
+
+Each file below only lists functions **unique** to that file. All shared logic lives in `utils.py`.
+
+---
+
+### `train_flat.py` — Train Flat Classifier
+
+**Purpose**: Trains `FlatResNet18` with 5-fold cross-validation, stratified on the joint (crop, disease) label.
+
+| Function     | Signature                                                                                                                           | What It Does                                                                                                                                                                       |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evaluate`   | `evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids)`           | Loads best weights, runs flat inference. Computes: (1) crop accuracy, (2) joint disease accuracy, (3) oracle-crop disease accuracy (logits restricted to the true crop's classes). Saves confusion matrices. |
+| `train_fold` | `train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids)` | Trains for up to 50 epochs with Adam (lr=1e-4) and early stopping (patience=7) on validation loss. Saves `best_model.pth` and calls `evaluate` at fold end.                       |
+| `main`       | `main()`                                                                                                                            | Builds the dataset index, creates 5-fold splits, instantiates a fresh `FlatResNet18` per fold, runs `train_fold`, and writes `summary_all_folds.csv` and `label_maps.json`.       |
+
+---
+
+### `train_hier.py` — Train Hierarchical Classifier
+
+**Purpose**: Trains `HierResNet18Concat` with a two-stage hierarchical loss: crop head loss plus a per-sample disease loss computed only on the true crop's slice of the concatenated disease logits.
+
+| Function     | Signature                                                                                        | What It Does                                                                                                                                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evaluate`   | `evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labels, global_index)` | Loads best weights, runs two-stage inference. Computes crop accuracy, predicted-crop disease accuracy, and oracle-crop disease accuracy. Saves three confusion matrices per fold.                                                          |
+| `train_fold` | `train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops, global_labels, global_index)` | Hierarchical loss: `total = crop_loss + disease_loss`. For `disease_loss`, only the slice of concatenated logits for the **true crop** is passed to `CrossEntropyLoss`, preventing gradient leakage between crop-specific heads. Early stopping (patience=7). |
+| `main`       | `main()`                                                                                         | Same structure as `train_flat.main()` but instantiates `HierResNet18Concat` per fold.                                                                                                                                                    |
+
+---
+
+### `test_flat.py` — Test Flat Classifier
+
+**Purpose**: Loads trained flat checkpoints (one per fold) and evaluates them across held-out geographic test regions.
+
+| Function               | Signature                                                                                                                         | What It Does                                                                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evaluate_region_fold` | `evaluate_region_fold(model, model_path, loader, device, fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids)` | Flat inference: predicts joint class, derives crop from that. Also computes oracle-crop disease accuracy by restricting logits to the true crop's joint classes. Saves confusion matrices. |
+| `main`                 | `main()`                                                                                                                          | Iterates all test regions × folds, builds `RegionDataset`, calls `evaluate_region_fold`, aggregates via `compute_region_stats` and `save_region_tables`, writes `summary_all_regions.csv`. |
+
+---
+
+### `test_hier.py` — Test Hierarchical Classifier
+
+**Purpose**: Loads trained hierarchical checkpoints and evaluates using the same two-stage inference as training.
+
+| Function               | Signature                                                                               | What It Does                                                                                                                                                                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `evaluate_region_fold` | `evaluate_region_fold(model, model_path, loader, device, fold_dir, crops, global_labels)` | Two-stage inference: Stage 1 predicts crop; Stage 2 predicts disease from (a) predicted-crop slice and (b) true-crop slice (oracle). Computes per-crop disease accuracies and saves confusion matrices per fold. |
+| `main`                 | `main()`                                                                                | Same structure as `test_flat.main()` but instantiates `HierResNet18Concat` and uses 2-argument `load_label_maps` unpacking (`_, _` for unused `global_to_crop_dis` / `crop_to_global_ids`).                           |
+
+---
+
+## Possible Errors
+
+### ERROR-01 — Per-Crop Disease Accuracy Uses Unconstrained Flat Prediction (CRITICAL)
+
+**File**: [test_flat.py](test_flat.py)
+
+**Buggy code**:
+
+```python
+per_crop_results[ci_true]["true"].append(gi_true)
+per_crop_results[ci_true]["pred"].append(gi_pred)       # <-- BUG
+```
+
+**What goes wrong**: `gi_pred` is the flat model's argmax over **all** joint classes — it can be a joint class from any crop. Storing it under `ci_true` mixes prediction spaces, making every `disease_{crop_name}` metric in the output CSV meaningless.
+
+**Fix**:
+
+```python
+per_crop_results[ci_true]["true"].append(gi_true)
+per_crop_results[ci_true]["pred"].append(gi_pred_true_crop)   # oracle-crop prediction (already computed)
+```
+
+---
+
+### ERROR-02 — Per-Crop Disease Accuracy Uses Predicted-Crop Slice Instead of True-Crop Slice (MODERATE)
+
+**File**: [test_hier.py](test_hier.py)
+
+**Buggy code**:
+
+```python
+per_crop_results[ci_true]["true"].append(gi_true)
+per_crop_results[ci_true]["pred"].append(gi_pred_pred_crop)   # <-- inconsistency
+```
+
+**What goes wrong**: `gi_pred_pred_crop` is from the **predicted crop's slice**, but `gi_true` is within the **true crop's slice**. When the crop prediction is wrong, the indices refer to different disease spaces.
+
+**Fix**:
+
+```python
+per_crop_results[ci_true]["true"].append(gi_true)
+per_crop_results[ci_true]["pred"].append(gi_pred_true_crop)   # oracle-crop prediction (already computed)
+```
 
 ---
 
@@ -181,9 +238,13 @@ DataLoader workers are seeded via `seed_worker` + a `torch.Generator` with the s
 
 | File                              | Description                                                                        |
 | --------------------------------- | ---------------------------------------------------------------------------------- |
-| `best_model.pt`                   | Checkpoint with the lowest validation loss                                         |
-| `summary.json`                    | Crop acc, disease acc (pred-crop), disease acc (oracle-crop), per-crop disease acc |
+| `best_model.pth`                  | Checkpoint with the lowest validation loss                                         |
+| `fold_summary.csv`                | Crop acc, disease acc (pred-crop and oracle-crop), F1 scores for the fold          |
 | `cm_crop.png / .csv`              | Crop confusion matrix                                                              |
 | `cm_disease_pred_crop.png / .csv` | Disease confusion matrix using the model's predicted crop                          |
 | `cm_disease_true_crop.png / .csv` | Disease confusion matrix using the true (oracle) crop                              |
-| `label_maps.json`                 | Serialised label→index mappings, used by test scripts                              |
+| `label_maps.json`                 | Serialised label→index mappings, read by test scripts via `load_label_maps()`      |
+| `summary_all_folds.csv`           | Aggregated results across all 5 folds (training scripts)                           |
+| `summary_all_regions.csv`         | Aggregated mean ± std across all test regions (test scripts)                       |
+| `table1_global_metrics.csv`       | P1 (crop acc), P2 (per-crop disease acc), P3 (global disease acc) — LaTeX-ready   |
+| `table2_per_crop_metrics.csv`     | Per-crop P1 and P2 breakdown — LaTeX-ready                                         |
