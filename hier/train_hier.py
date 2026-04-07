@@ -36,10 +36,7 @@ from utils import (
 )
 
 
-# ============================================================
-#                       EVALUATION
-#         (TWO-STAGE: crop -> disease slice -> global ID)
-# ============================================================
+# evaluation
 def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labels,
              global_index):
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -121,10 +118,7 @@ def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labe
     return summary
 
 
-# ============================================================
-#                        TRAINING
-#       (TWO-STAGE HIERARCHICAL LOSS WITH CONCATENATED HEADS)
-# ============================================================
+# training
 def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
                global_labels, global_index):
     criterion = nn.CrossEntropyLoss()
@@ -216,9 +210,7 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
     return summary
 
 
-# ============================================================
-#                           MAIN
-# ============================================================
+# main
 def main():
     DATASET = "/deepstore/datasets/dmb/ComputerVision/biology/training7"
     SAVE_ROOT = "/home/nalwangar/finally/logs_hierM"

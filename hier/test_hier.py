@@ -39,9 +39,7 @@ from utils import (
     save_region_tables,
 )
 
-# ============================================================
-#                   CONFIG
-# ============================================================
+# config
 MODEL_ROOT = "/home/nalwangar/finally/logs_hierM"
 TEST_ROOT = "/deepstore/datasets/dmb/ComputerVision/biology/testsets7"
 SAVE_ROOT = "/home/nalwangar/finally/logs_newh/testM"
@@ -53,9 +51,7 @@ NUM_WORKERS = 4
 os.makedirs(SAVE_ROOT, exist_ok=True)
 
 
-# ============================================================
-#              EVALUATE ONE FOLD
-# ============================================================
+# evaluate one fold
 def evaluate_region_fold(model, model_path, loader, device, fold_dir, crops, global_labels):
     state = torch.load(model_path, map_location=device)
     model.load_state_dict(state)
@@ -167,9 +163,7 @@ def evaluate_region_fold(model, model_path, loader, device, fold_dir, crops, glo
     }
 
 
-# ============================================================
-#                         MAIN
-# ============================================================
+# main
 def main():
     os.makedirs(SAVE_ROOT, exist_ok=True)
 

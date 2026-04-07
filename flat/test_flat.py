@@ -34,9 +34,7 @@ from utils import (
     save_region_tables,
 )
 
-# ============================================================
-#                    PATHS / CONFIG
-# ============================================================
+# paths / config
 MODEL_ROOT = "/home/nalwangar/finally/logs_flatD"
 TEST_ROOT = "/deepstore/datasets/dmb/ComputerVision/biology/testsets7"
 SAVE_ROOT = "/home/nalwangar/finally/logs_newf/testd"
@@ -48,9 +46,7 @@ NUM_WORKERS = 4
 os.makedirs(SAVE_ROOT, exist_ok=True)
 
 
-# ============================================================
-#              EVALUATE ONE FOLD
-# ============================================================
+# evaluate one fold
 def evaluate_region_fold(model, model_path, loader, device, fold_dir,
                          crops, global_labels, global_to_crop_dis, crop_to_global_ids):
     state = torch.load(model_path, map_location=device)
@@ -160,9 +156,7 @@ def evaluate_region_fold(model, model_path, loader, device, fold_dir,
     }
 
 
-# ============================================================
-#                            MAIN
-# ============================================================
+# main
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

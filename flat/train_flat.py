@@ -42,10 +42,7 @@ from utils import (
 )
 
 
-# ============================================================
-#                       EVALUATION
-#       (FLAT JOINT PREDICTION + HIERARCHICAL METRICS)
-# ============================================================
+# evaluation
 def evaluate(model, model_path, val_loader, device, fold_dir,
              crops, global_labels, global_to_crop_dis, crop_to_global_ids):
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -125,9 +122,7 @@ def evaluate(model, model_path, val_loader, device, fold_dir,
     return summary
 
 
-# ============================================================
-#                        TRAINING
-# ============================================================
+# training
 def train_fold(fold, model, train_loader, val_loader, device, fold_dir,
                crops, global_labels, global_to_crop_dis, crop_to_global_ids):
     criterion = nn.CrossEntropyLoss()
@@ -191,9 +186,7 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir,
     return summary
 
 
-# ============================================================
-#                           MAIN
-# ============================================================
+# main
 def main():
     DATASET = "/deepstore/datasets/dmb/ComputerVision/biology/training7"
     SAVE_ROOT = "/home/nalwangar/finally/logs_flatM"
