@@ -190,7 +190,9 @@ Each file below only lists functions **unique** to that file. All shared logic l
 
 ## Possible Errors
 
-### ERROR-01 — Per-Crop Disease Accuracy Uses Unconstrained Flat Prediction (CRITICAL)
+> Both errors below have been corrected. They are documented here for traceability.
+
+### ERROR-01 — Per-Crop Disease Accuracy Uses Unconstrained Flat Prediction (FIXED)
 
 **File**: [test_flat.py](test_flat.py)
 
@@ -212,7 +214,7 @@ per_crop_results[ci_true]["pred"].append(gi_pred_true_crop)   # oracle-crop pred
 
 ---
 
-### ERROR-02 — Per-Crop Disease Accuracy Uses Predicted-Crop Slice Instead of True-Crop Slice (MODERATE)
+### ERROR-02 — Per-Crop Disease Accuracy Uses Predicted-Crop Slice Instead of True-Crop Slice (FIXED)
 
 **File**: [test_hier.py](test_hier.py)
 

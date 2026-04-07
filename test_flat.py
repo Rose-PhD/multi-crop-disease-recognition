@@ -102,7 +102,7 @@ def evaluate_region_fold(model, model_path, loader, device, fold_dir,
                     pred_global_true_crop_all.append(gi_pred_true_crop)
 
                     per_crop_results[ci_true]["true"].append(gi_true)
-                    per_crop_results[ci_true]["pred"].append(gi_pred)
+                    per_crop_results[ci_true]["pred"].append(gi_pred_true_crop)
 
     crop_acc = accuracy_score(true_crop_all, pred_crop_all) if true_crop_all else 0.0
     disease_acc_pred_crop = accuracy_score(true_global_all, pred_global_pred_crop_all) if true_global_all else 0.0
