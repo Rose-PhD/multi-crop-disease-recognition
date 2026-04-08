@@ -6,8 +6,8 @@
 #SBATCH -t 24:00:00            # time limit
 #SBATCH -J train_resnet18      # job name
 
-#SBATCH --output=/home/nalwangar/finally/logs_hierM/slurm_train_out_%j.out
-#SBATCH --error=/home/nalwangar/finally/logs_hierM/slurm_train_err_%j.err
+#SBATCH --output=/home/nalwangar/wilfred/logs_hierX/slurm_train_out_%j.out
+#SBATCH --error=/home/nalwangar/wilfred/logs_hierX/slurm_train_err_%j.err
 
 echo "=== Job started on $(hostname) at $(date) ==="
 
@@ -15,18 +15,18 @@ echo "=== Job started on $(hostname) at $(date) ==="
 # Load your environment correctly
 # -------------------------------------------------
 source ~/.bashrc      # IMPORTANT: enables conda
-conda activate hierarchical
+conda activate dev-multicrop
 
 echo "Conda environment: $CONDA_DEFAULT_ENV"
 echo "Python path: $(which python)"
 
 # Move to your working directory (recommended)
-cd /home/nalwangar/finally
+cd /home/nalwangar/wilfred/multi-crop-disease-recognition
 
 # -------------------------------------------------
 # Run your training script
 # -------------------------------------------------
-python -m flat.train_hier
+python -m hier.train_hier
 
 echo "=== Job finished at $(date) ==="
 
