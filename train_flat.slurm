@@ -21,7 +21,8 @@ echo "Conda environment: $CONDA_DEFAULT_ENV"
 echo "Python path: $(which python)"
 
 # Move to your working directory (recommended)
-cd /home/nalwangar/wilfred
+# cd /home/nalwangar/wilfred/mutli-crop-disease-recognition
+cd /home/nalwangar/wilfred/multi-crop-disease-recognition
 
 # -------------------------------------------------
 # Run your training script
