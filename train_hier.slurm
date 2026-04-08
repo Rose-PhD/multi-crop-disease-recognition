@@ -26,7 +26,7 @@ cd /home/nalwangar/finally
 # -------------------------------------------------
 # Run your training script
 # -------------------------------------------------
-python train_hier.py
+python -m flat.train_hier
 
 echo "=== Job finished at $(date) ==="
 
