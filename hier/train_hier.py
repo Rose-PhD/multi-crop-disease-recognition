@@ -213,7 +213,7 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
 # main
 def main():
     DATASET = "/deepstore/datasets/dmb/ComputerVision/biology/train-V"
-    SAVE_ROOT = "/home/nalwangar/finally/logs_hierX"
+    SAVE_ROOT = "/home/nalwangar/wilfred/logs_hierX"
     os.makedirs(SAVE_ROOT, exist_ok=True)
 
     crops, diseases_by_crop, items = build_index(DATASET)
