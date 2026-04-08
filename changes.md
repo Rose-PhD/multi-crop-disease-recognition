@@ -298,3 +298,4 @@ python flat/test_flat.py
 python hier/train_hier.py
 python hier/test_hier.py
 ```
+changed the folder name
