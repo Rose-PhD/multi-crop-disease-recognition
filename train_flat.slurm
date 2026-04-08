@@ -27,7 +27,7 @@ cd /home/nalwangar/wilfred/multi-crop-disease-recognition
 # -------------------------------------------------
 # Run your training script
 # -------------------------------------------------
-python train_flat.py
+python -m flat.train_flat
 
 echo "=== Job finished at $(date) ==="
 
