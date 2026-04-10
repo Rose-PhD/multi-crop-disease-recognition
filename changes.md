@@ -299,3 +299,195 @@ python hier/train_hier.py
 python hier/test_hier.py
 ```
 changed the folder name
+
+---
+
+## Custom Models Pipeline
+
+All work below adds a fully-from-scratch ResNet-18 pipeline (flat and hierarchical)
+that trains without pretrained ImageNet weights, following the same CV protocol as the
+existing `flat/` and `hier/` baselines.
+
+---
+
+### New: `models/flat/custom_model.py`
+
+Scratch-built ResNet-18 (`BasicBlock` + `ResNet18`) with no dependency on torchvision
+pretrained weights. Accepts `num_classes` at construction time so the same class serves
+both the flat classifier and as the backbone for the hierarchical model.
+
+---
+
+### New: `models/hier/custom_hier_model.py`
+
+`CustomHierResNet18` — hierarchical classifier that wraps `ResNet18` from
+`models/flat/custom_model.py` as a feature extractor (fc replaced with `nn.Identity`)
+and attaches:
+- `crop_head : Linear(512, num_crops)`
+- `heads     : ModuleList` of per-crop `Linear(512, n_diseases)` heads
+
+Internally builds and stores `crop_slices`, `global_index`, and `global_labels` so
+callers do not need to maintain external mappings.
+
+All parameters are trainable — no frozen layers since there are no pretrained weights.
+
+---
+
+### New: `models/flat/train_custom_model.py`
+
+Trains `ResNet18` flat (joint crop+disease) using:
+- `StratifiedKFold(5)` stratified on joint class labels
+- `CrossEntropyLoss` + `Adam(lr=1e-4)`, early stopping (patience=7)
+- Separate train/val transforms
+
+Outputs: `label_maps.json`, `fold{n}/best_model.pth`, per-fold CSV + confusion matrices,
+`summary_all_folds.csv`.
+
+---
+
+### New: `models/hier/train_hier.py`
+
+Trains `CustomHierResNet18` with a two-term loss:
+```
+loss = CrossEntropy(crop_logits, yc) + mean_i CrossEntropy(out_dis[i, slice_i], yd[i])
+```
+Same CV protocol and output layout as the flat training script.
+
+---
+
+### New: `models/flat/test_custom_flat.py`
+
+Multi-region evaluation of the trained flat custom model.  
+Evaluates per fold per region; reports crop accuracy, disease accuracy (pred-crop and
+oracle-crop), macro/weighted F1, per-crop disease accuracy, confusion matrices, and
+LaTeX-ready region summary tables.
+
+---
+
+### New: `models/hier/test_hier.py`
+
+Multi-region evaluation of the trained hierarchical custom model.  
+Two-stage inference: predict crop → restrict disease logits to that crop's slice.  
+Same output layout as `models/flat/test_custom_flat.py`.
+
+---
+
+### Refactor: shared utilities extracted into `utils/`
+
+Eliminated four categories of duplication across the new model scripts by adding three
+new submodules to the existing `utils/` package.
+
+#### `utils/train_utils.py`
+
+| Function | Replaces |
+|---|---|
+| `build_global_index(crops, diseases_by_crop)` | Identical 10-line loop copy-pasted in both train scripts |
+| `run_epoch_loop(fold, model, loaders, device, fold_dir, compute_loss, *, patience, max_epochs, lr)` | Identical epoch + early-stopping skeleton in both train scripts |
+
+`run_epoch_loop` accepts a `compute_loss(model, batch, device) → Tensor` callback so
+the flat and hierarchical loss functions remain in their own scripts.
+
+#### `utils/eval_utils.py`
+
+| Function | Replaces |
+|---|---|
+| `save_fold_cms(...)` | CM-save block copy-pasted in all 4 scripts |
+| `compute_fold_metrics(...)` | accuracy + F1 metric dict copy-pasted in all 4 scripts |
+| `evaluate_flat(...)` | `evaluate` in `train_custom_model.py` + `evaluate_region_fold` in `test_custom_flat.py` |
+| `evaluate_hier(...)` | `evaluate` in `train_hier.py` + `evaluate_region_fold` in `test_hier.py` |
+
+`evaluate_flat` and `evaluate_hier` both include the `if gi_true >= 0` guard so they
+work at train time (guard always passes — all labels valid) and at test time
+(guard skips unlabelled images).  Both always return `per_crop_acc`; training scripts
+`pop` it before saving their fold summary CSV.
+
+#### `utils/test_utils.py`
+
+| Function | Replaces |
+|---|---|
+| `run_region_test_loop(make_model, model_root, test_root, save_root, ..., evaluate_fold_fn)` | ~80-line multi-region loop copy-pasted in both test scripts |
+
+Test scripts bind their model-specific arguments with `functools.partial` and pass the
+resulting callable as `evaluate_fold_fn`.
+
+#### `utils/__init__.py` updated
+
+New exports added: `build_global_index`, `run_epoch_loop`, `save_fold_cms`,
+`compute_fold_metrics`, `evaluate_flat`, `evaluate_hier`, `run_region_test_loop`.
+
+---
+
+### Refactor: `models/` reorganised into `flat/` and `hier/` subpackages
+
+| Old path | New path |
+|---|---|
+| `models/custom_model.py` | `models/flat/custom_model.py` |
+| `models/train_custom_model.py` | `models/flat/train_custom_model.py` |
+| `models/test_custom_flat.py` | `models/flat/test_custom_flat.py` |
+| `models/custom_hier_model.py` | `models/hier/custom_hier_model.py` |
+| `models/train_hier.py` | `models/hier/train_hier.py` |
+| `models/test_hier.py` | `models/hier/test_hier.py` |
+
+New `__init__.py` files added to `models/flat/` and `models/hier/`.  
+`models/__init__.py` updated to re-export `ResNet18` and `CustomHierResNet18`.
+
+#### Import changes
+
+All scripts gained one extra `.parent` in the `sys.path` insert (now 3 levels up to
+reach the project root):
+```python
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+```
+
+Model import paths updated in every affected file:
+
+| File | Before | After |
+|---|---|---|
+| `hier/custom_hier_model.py` | `from models.custom_model import ResNet18` | `from models.flat.custom_model import ResNet18` |
+| `flat/train_custom_model.py` | `from models.custom_model import ResNet18` | `from models.flat.custom_model import ResNet18` |
+| `flat/test_custom_flat.py` | `from models.custom_model import ResNet18` | `from models.flat.custom_model import ResNet18` |
+| `hier/train_hier.py` | `from models.custom_hier_model import CustomHierResNet18` | `from models.hier.custom_hier_model import CustomHierResNet18` |
+| `hier/test_hier.py` | `from models.custom_hier_model import CustomHierResNet18` | `from models.hier.custom_hier_model import CustomHierResNet18` |
+
+---
+
+### New: `train_custom_flat.slurm`
+
+SLURM job script for `models/flat/train_custom_model.py`.
+
+| Setting | Value |
+|---|---|
+| Partition | `dmb` |
+| GPU | 1 |
+| CPUs | 4 |
+| Memory | 32 G |
+| Time limit | 24 h |
+| Conda env | `dev-multicrop` |
+| Log dir | `logs_customY/` |
+
+---
+
+### New: `train_custom_hier.slurm`
+
+SLURM job script for `models/hier/train_hier.py`.
+
+| Setting | Value |
+|---|---|
+| Partition | `dmb` |
+| GPU | 1 |
+| CPUs | 4 |
+| Memory | 32 G |
+| Time limit | 24 h |
+| Conda env | `dev-multicrop` |
+| Log dir | `logs_customHierY/` |
+
+---
+
+### Fix: `train_custom_flat.slurm` script path updated
+
+After the `models/` reorganisation, the slurm script was updated:
+
+```diff
+-python models/train_custom_model.py
++python models/flat/train_custom_model.py
+```
