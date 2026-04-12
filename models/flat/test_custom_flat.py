@@ -18,9 +18,9 @@ from utils import load_label_maps, evaluate_flat, run_region_test_loop
 from models.flat.custom_model import ResNet18
 
 # config
-MODEL_ROOT = "/home/nalwangar/finally/logs_customY"
+MODEL_ROOT = "/home/nalwangar/wilfred/logs_customY"
 TEST_ROOT  = "/deepstore/datasets/dmb/ComputerVision/biology/testsets7"
-SAVE_ROOT  = "/home/nalwangar/finally/logs_customFlat/test"
+SAVE_ROOT  = "/home/nalwangar/wilfred/logs_customFlat/test"
 
 os.makedirs(SAVE_ROOT, exist_ok=True)
 

@@ -41,7 +41,7 @@ from models.hier.custom_hier_model import CustomHierResNet18
 
 # paths / config
 DATASET   = "/deepstore/datasets/dmb/ComputerVision/biology/train-D"
-SAVE_ROOT = "/home/nalwangar/finally/logs_customHierY"
+SAVE_ROOT = "/home/nalwangar/wilfred/logs_customHierY"
 
 N_FOLDS     = 5
 BATCH_SIZE  = 32

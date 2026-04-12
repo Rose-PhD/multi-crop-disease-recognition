@@ -41,7 +41,7 @@ from models.flat.custom_model import ResNet18
 
 # paths / config
 DATASET   = "/deepstore/datasets/dmb/ComputerVision/biology/train-D"
-SAVE_ROOT = "/home/nalwangar/finally/logs_customY"
+SAVE_ROOT = "/home/nalwangar/wilfred/logs_customY"
 
 N_FOLDS     = 5
 BATCH_SIZE  = 32

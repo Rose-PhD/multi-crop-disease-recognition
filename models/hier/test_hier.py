@@ -18,9 +18,9 @@ from utils import load_label_maps, evaluate_hier, run_region_test_loop
 from models.hier.custom_hier_model import CustomHierResNet18
 
 # config
-MODEL_ROOT = "/home/nalwangar/finally/logs_customHierY"
+MODEL_ROOT = "/home/nalwangar/wilfred/logs_customHierY"
 TEST_ROOT  = "/deepstore/datasets/dmb/ComputerVision/biology/testsets7"
-SAVE_ROOT  = "/home/nalwangar/finally/logs_customHier/test"
+SAVE_ROOT  = "/home/nalwangar/wilfred/logs_customHier/test"
 
 os.makedirs(SAVE_ROOT, exist_ok=True)
 
