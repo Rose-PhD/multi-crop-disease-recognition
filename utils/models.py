@@ -7,6 +7,14 @@ fallback to a local checkpoint when pretrained weights cannot be downloaded.
 Provides:
   - FlatResNet18       : single joint-class linear head
   - HierResNet18Concat : crop head + concatenated per-crop disease heads
+
+Unfreezing:
+  Both models accept an ``unfreeze_from`` parameter that controls which
+  backbone layers are made trainable.  Valid values (in order):
+    "layer4"  — only the last residual block (default, cheapest)
+    "layer3"  — layer3 + layer4
+    "layer2"  — layer2 + layer3 + layer4
+    "layer1"  — full backbone
 """
 
 import torch
@@ -15,6 +23,8 @@ from torchvision import models
 from torchvision.models import ResNet18_Weights
 
 _LOCAL_WEIGHTS = "/home/nalwangar/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth"
+
+_BACKBONE_LAYERS = ["layer1", "layer2", "layer3", "layer4"]
 
 
 def _load_resnet18_backbone():
@@ -29,27 +39,44 @@ def _load_resnet18_backbone():
     return backbone
 
 
+def _apply_unfreeze(backbone, unfreeze_from: str):
+    """Freeze all backbone params, then unfreeze from *unfreeze_from* to the end.
+
+    Args:
+        backbone:       The ResNet-18 backbone module.
+        unfreeze_from:  Name of the first layer to unfreeze.  Every layer at
+                        this position and later in _BACKBONE_LAYERS will have
+                        their parameters set to requires_grad=True.
+    """
+    if unfreeze_from not in _BACKBONE_LAYERS:
+        raise ValueError(
+            f"unfreeze_from must be one of {_BACKBONE_LAYERS}, got '{unfreeze_from}'"
+        )
+    trainable = set(_BACKBONE_LAYERS[_BACKBONE_LAYERS.index(unfreeze_from):])
+    for p in backbone.parameters():
+        p.requires_grad = False
+    for name, p in backbone.named_parameters():
+        if any(layer in name for layer in trainable):
+            p.requires_grad = True
+    print(f"Backbone unfrozen from {unfreeze_from} onwards: {sorted(trainable)}")
+
+
 class FlatResNet18(nn.Module):
     """
     Flat baseline classifier.
 
     Architecture:
-        ResNet-18 backbone (layer4 + head trainable, rest frozen)
+        ResNet-18 backbone (unfreeze_from layer + head trainable, rest frozen)
         → Linear(512, num_joint_classes)
 
     A single head predicts over all (crop, disease) joint classes at once.
     """
 
-    def __init__(self, num_joint_classes):
+    def __init__(self, num_joint_classes, unfreeze_from="layer4"):
         super().__init__()
 
         backbone = _load_resnet18_backbone()
-
-        for p in backbone.parameters():
-            p.requires_grad = False
-        for name, p in backbone.named_parameters():
-            if "layer4" in name:
-                p.requires_grad = True
+        _apply_unfreeze(backbone, unfreeze_from)
 
         in_features = backbone.fc.in_features
         backbone.fc = nn.Linear(in_features, num_joint_classes)
@@ -64,7 +91,7 @@ class HierResNet18Concat(nn.Module):
     Hierarchical classifier — Option C (concatenated heads).
 
     Architecture:
-        ResNet-18 backbone (layer4 + both heads trainable, rest frozen)
+        ResNet-18 backbone (unfreeze_from layer + both heads trainable, rest frozen)
         → crop_head  : Linear(512, num_crops)          — crop logits
         → heads[0..C]: Linear(512, n_diseases_for_crop) — per-crop disease logits
         → cat(heads)  : (B, total_diseases)             — concatenated disease logits
@@ -74,16 +101,14 @@ class HierResNet18Concat(nn.Module):
     two-stage inference during evaluation.
     """
 
-    def __init__(self, crops, diseases_by_crop):
+    def __init__(self, crops, diseases_by_crop, unfreeze_from="layer4"):
         super().__init__()
 
         self.crops = crops
         self.diseases_by_crop = diseases_by_crop
 
         backbone = _load_resnet18_backbone()
-
-        for name, p in backbone.named_parameters():
-            p.requires_grad = ("layer4" in name)
+        _apply_unfreeze(backbone, unfreeze_from)
 
         in_features = backbone.fc.in_features
         backbone.fc = nn.Identity()

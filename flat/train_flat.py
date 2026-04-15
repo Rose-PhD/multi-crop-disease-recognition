@@ -187,14 +187,63 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir,
 
 
 # main
+def run_config(name, unfreeze_from, config_dir, items, global_index, global_labels,
+               global_to_crop_dis, crop_to_global_ids, crops, num_joint_classes,
+               train_transform, val_transform, device):
+    """Run 5-fold CV for one unfreezing configuration and return all fold summaries."""
+    joint_labels = [global_index[(c, d)] for _, c, d in items]
+    paths = [p for p, _, _ in items]
+    skf = StratifiedKFold(5, shuffle=True, random_state=SEED)
+    fold_results = []
+
+    for fold, (train_idx, val_idx) in enumerate(skf.split(paths, joint_labels), 1):
+        print(f"\n[{name}] ===== FOLD {fold} =====")
+
+        train_items = [items[i] for i in train_idx]
+        val_items   = [items[i] for i in val_idx]
+
+        train_loader = DataLoader(
+            HierDataset(train_items, train_transform, global_index),
+            batch_size=32, shuffle=True, num_workers=4,
+            collate_fn=safe_collate, worker_init_fn=seed_worker, generator=g
+        )
+        val_loader = DataLoader(
+            HierDataset(val_items, val_transform, global_index),
+            batch_size=32, shuffle=False, num_workers=4,
+            collate_fn=safe_collate, worker_init_fn=seed_worker, generator=g
+        )
+
+        model = FlatResNet18(num_joint_classes=num_joint_classes,
+                             unfreeze_from=unfreeze_from).to(device)
+
+        fold_dir = config_dir / f"fold{fold}"
+        fold_dir.mkdir(parents=True, exist_ok=True)
+
+        summary = train_fold(
+            fold, model, train_loader, val_loader, device,
+            fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids
+        )
+        fold_results.append({"variant": name, **summary})
+
+    pd.DataFrame(fold_results).to_csv(config_dir / "summary_all_folds.csv", index=False)
+    print(f"\n=== [{name}] TRAINING COMPLETE ===")
+    return fold_results
+
+
 def main():
-    DATASET = "/deepstore/datasets/dmb/ComputerVision/biology/train-D"
-    SAVE_ROOT = "/home/nalwangar/wilfred/logs_hierY"
-    os.makedirs(SAVE_ROOT, exist_ok=True)
+    # Two variants to compare: only layer4 unfrozen vs. full backbone unfrozen.
+    CONFIGS = [
+        {"name": "flat_layer4_only", "unfreeze_from": "layer4"},
+        {"name": "flat_full_unfreeze", "unfreeze_from": "layer1"},
+    ]
+
+    DATASET  = "/deepstore/datasets/dmb/ComputerVision/biology/train-D"
+    SAVE_ROOT = Path("/home/nalwangar/wilfred/logs_hierY")
+    SAVE_ROOT.mkdir(parents=True, exist_ok=True)
 
     crops, diseases_by_crop, items = build_index(DATASET)
 
-    with open(f"{SAVE_ROOT}/label_maps.json", "w") as f:
+    with open(SAVE_ROOT / "label_maps.json", "w") as f:
         json.dump({"crops": crops, "diseases_within_crop": diseases_by_crop}, f, indent=4)
 
     global_index = {}
@@ -215,46 +264,33 @@ def main():
         crop_to_global_ids.setdefault(ci, []).append(gid)
 
     global_labels = labels
-    joint_labels = [global_index[(c, d)] for _, c, d in items]
-
     train_transform = make_train_transform()
-    val_transform = make_val_transform()
+    val_transform   = make_val_transform()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    skf = StratifiedKFold(5, shuffle=True, random_state=SEED)
-    fold_results = []
-    paths = [p for p, _, _ in items]
-
-    for fold, (train_idx, val_idx) in enumerate(skf.split(paths, joint_labels), 1):
-        print(f"\n===== FOLD {fold} =====")
-
-        train_items = [items[i] for i in train_idx]
-        val_items = [items[i] for i in val_idx]
-
-        train_loader = DataLoader(
-            HierDataset(train_items, train_transform, global_index),
-            batch_size=32, shuffle=True, num_workers=4,
-            collate_fn=safe_collate, worker_init_fn=seed_worker, generator=g
+    all_results = []
+    for cfg in CONFIGS:
+        config_dir = SAVE_ROOT / cfg["name"]
+        config_dir.mkdir(parents=True, exist_ok=True)
+        results = run_config(
+            name=cfg["name"],
+            unfreeze_from=cfg["unfreeze_from"],
+            config_dir=config_dir,
+            items=items,
+            global_index=global_index,
+            global_labels=global_labels,
+            global_to_crop_dis=global_to_crop_dis,
+            crop_to_global_ids=crop_to_global_ids,
+            crops=crops,
+            num_joint_classes=num_joint_classes,
+            train_transform=train_transform,
+            val_transform=val_transform,
+            device=device,
         )
-        val_loader = DataLoader(
-            HierDataset(val_items, val_transform, global_index),
-            batch_size=32, shuffle=False, num_workers=4,
-            collate_fn=safe_collate, worker_init_fn=seed_worker, generator=g
-        )
+        all_results.extend(results)
 
-        model = FlatResNet18(num_joint_classes=num_joint_classes).to(device)
-
-        fold_dir = Path(SAVE_ROOT) / f"fold{fold}"
-        fold_dir.mkdir(parents=True, exist_ok=True)
-
-        summary = train_fold(
-            fold, model, train_loader, val_loader, device,
-            fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids
-        )
-        fold_results.append(summary)
-
-    pd.DataFrame(fold_results).to_csv(f"{SAVE_ROOT}/summary_all_folds.csv", index=False)
-    print("\n=== TRAINING COMPLETE: FLAT RESNET-18 BASELINE ===")
+    pd.DataFrame(all_results).to_csv(SAVE_ROOT / "comparison_all_variants.csv", index=False)
+    print("\n=== ALL VARIANTS COMPLETE ===")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import os
 import json
 
 import pandas as pd
@@ -64,7 +63,6 @@ def evaluate(model, model_path, val_loader, device, fold_dir, crops, global_labe
             for i in range(imgs.size(0)):
                 ci_pred = int(pred_c[i].item())
                 ci_true = int(yc[i].item())
-                di_true = int(yd[i].item())
 
                 start_pred, end_pred = model.crop_slices[ci_pred]
                 local_pred_pred_crop = int(out_dis[i, start_pred:end_pred].argmax().item())
@@ -136,7 +134,7 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
         for batch in train_loader:
             if batch is None:
                 continue
-            imgs, yc, yd, yg = batch
+            imgs, yc, yd, _ = batch
             imgs = imgs.to(device)
             yc = yc.to(device)
             yd = yd.to(device)
@@ -167,7 +165,7 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
             for batch in val_loader:
                 if batch is None:
                     continue
-                imgs, yc, yd, yg = batch
+                imgs, yc, yd, _ = batch
                 imgs = imgs.to(device)
                 yc = yc.to(device)
                 yd = yd.to(device)
@@ -211,41 +209,19 @@ def train_fold(fold, model, train_loader, val_loader, device, fold_dir, crops,
 
 
 # main
-def main():
-    DATASET = "/deepstore/datasets/dmb/ComputerVision/biology/train-V"
-    SAVE_ROOT = "/home/nalwangar/wilfred/logs_hierX"
-    os.makedirs(SAVE_ROOT, exist_ok=True)
-
-    crops, diseases_by_crop, items = build_index(DATASET)
-
-    with open(f"{SAVE_ROOT}/label_maps.json", "w") as f:
-        json.dump({"crops": crops, "diseases_within_crop": diseases_by_crop}, f, indent=4)
-
-    global_index = {}
-    labels = []
-    idx = 0
-    for ci, crop in enumerate(crops):
-        for di, dis in enumerate(diseases_by_crop[crop]):
-            global_index[(ci, di)] = idx
-            labels.append(f"{crop}:{dis}")
-            idx += 1
-
-    global_labels = labels
+def run_config(name, unfreeze_from, config_dir, items, global_index, global_labels,
+               crops, diseases_by_crop, train_transform, val_transform, device):
+    """Run 5-fold CV for one unfreezing configuration and return all fold summaries."""
     joint_labels = [global_index[(c, d)] for _, c, d in items]
-
-    train_transform = make_train_transform()
-    val_transform = make_val_transform()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    paths = [p for p, _, _ in items]
     skf = StratifiedKFold(5, shuffle=True, random_state=SEED)
     fold_results = []
-    paths = [p for p, _, _ in items]
 
     for fold, (train_idx, val_idx) in enumerate(skf.split(paths, joint_labels), 1):
-        print(f"\n===== FOLD {fold} =====")
+        print(f"\n[{name}] ===== FOLD {fold} =====")
 
         train_items = [items[i] for i in train_idx]
-        val_items = [items[i] for i in val_idx]
+        val_items   = [items[i] for i in val_idx]
 
         train_loader = DataLoader(
             HierDataset(train_items, train_transform, global_index),
@@ -258,19 +234,74 @@ def main():
             collate_fn=safe_collate, worker_init_fn=seed_worker, generator=g
         )
 
-        model = HierResNet18Concat(crops, diseases_by_crop).to(device)
+        model = HierResNet18Concat(crops, diseases_by_crop,
+                                   unfreeze_from=unfreeze_from).to(device)
 
-        fold_dir = Path(SAVE_ROOT) / f"fold{fold}"
+        fold_dir = config_dir / f"fold{fold}"
         fold_dir.mkdir(parents=True, exist_ok=True)
 
         summary = train_fold(
             fold, model, train_loader, val_loader, device,
             fold_dir, crops, global_labels, global_index
         )
-        fold_results.append(summary)
+        fold_results.append({"variant": name, **summary})
 
-    pd.DataFrame(fold_results).to_csv(f"{SAVE_ROOT}/summary_all_folds.csv", index=False)
-    print("\n=== TRAINING COMPLETE: FULLY HIERARCHICAL OPTION C (CONCATENATED HEADS) ===")
+    pd.DataFrame(fold_results).to_csv(config_dir / "summary_all_folds.csv", index=False)
+    print(f"\n=== [{name}] TRAINING COMPLETE ===")
+    return fold_results
+
+
+def main():
+    # Two variants to compare: only layer4 unfrozen vs. full backbone unfrozen.
+    CONFIGS = [
+        {"name": "hier_layer4_only",   "unfreeze_from": "layer4"},
+        {"name": "hier_full_unfreeze", "unfreeze_from": "layer1"},
+    ]
+
+    DATASET   = "/deepstore/datasets/dmb/ComputerVision/biology/train-V"
+    SAVE_ROOT = Path("/home/nalwangar/wilfred/logs_hierX")
+    SAVE_ROOT.mkdir(parents=True, exist_ok=True)
+
+    crops, diseases_by_crop, items = build_index(DATASET)
+
+    with open(SAVE_ROOT / "label_maps.json", "w") as f:
+        json.dump({"crops": crops, "diseases_within_crop": diseases_by_crop}, f, indent=4)
+
+    global_index = {}
+    labels = []
+    idx = 0
+    for ci, crop in enumerate(crops):
+        for di, dis in enumerate(diseases_by_crop[crop]):
+            global_index[(ci, di)] = idx
+            labels.append(f"{crop}:{dis}")
+            idx += 1
+
+    global_labels = labels
+    train_transform = make_train_transform()
+    val_transform   = make_val_transform()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    all_results = []
+    for cfg in CONFIGS:
+        config_dir = SAVE_ROOT / cfg["name"]
+        config_dir.mkdir(parents=True, exist_ok=True)
+        results = run_config(
+            name=cfg["name"],
+            unfreeze_from=cfg["unfreeze_from"],
+            config_dir=config_dir,
+            items=items,
+            global_index=global_index,
+            global_labels=global_labels,
+            crops=crops,
+            diseases_by_crop=diseases_by_crop,
+            train_transform=train_transform,
+            val_transform=val_transform,
+            device=device,
+        )
+        all_results.extend(results)
+
+    pd.DataFrame(all_results).to_csv(SAVE_ROOT / "comparison_all_variants.csv", index=False)
+    print("\n=== ALL VARIANTS COMPLETE ===")
 
 
 if __name__ == "__main__":
