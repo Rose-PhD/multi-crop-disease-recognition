@@ -6,8 +6,8 @@
 #SBATCH -t 24:00:00            # time limit
 #SBATCH -J train_resnet18      # job name
 
-#SBATCH --output=/home/wilfred/sys/multi-crop-disease-recognition/logs/slurm_hier_out_%j.out
-#SBATCH --error=/home/wilfred/sys/multi-crop-disease-recognition/logs/slurm_hier_err_%j.err
+#SBATCH --output=/home/nalwangar/wilfred/multi-crop-disease-recognition/logs/slurm_hier_out_%j.out
+#SBATCH --error=/home/nalwangar/wilfred/multi-crop-disease-recognition/logs/slurm_hier_err_%j.err
 
 echo "=== Job started on $(hostname) at $(date) ==="
 echo "=== SLURM_JOB_ID: $SLURM_JOB_ID ==="
@@ -25,7 +25,7 @@ echo "Conda environment: $CONDA_DEFAULT_ENV"
 echo "Python path: $(which python)"
 
 # Move to your working directory (recommended)
-cd /home/wilfred/sys/multi-crop-disease-recognition || { echo "ERROR: working directory not found"; exit 1; }
+cd /home/nalwangar/wilfred/multi-crop-disease-recognition || { echo "ERROR: working directory not found"; exit 1; }
 echo "Working directory: $(pwd)"
 
 # -------------------------------------------------
