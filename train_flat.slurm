@@ -18,8 +18,14 @@ echo "=== GPUs assigned: $CUDA_VISIBLE_DEVICES ==="
 # -------------------------------------------------
 # Load your environment correctly
 # -------------------------------------------------
-source ~/.bashrc      # IMPORTANT: enables conda
+source /deepstore/software/anaconda3/2024.02/etc/profile.d/conda.sh
 conda activate dev-multicrop
+
+PYTHON_BIN=$(which python)
+if [[ "$PYTHON_BIN" != *"dev-multicrop"* ]]; then
+    echo "ERROR: conda activate dev-multicrop failed. Python resolves to: $PYTHON_BIN"
+    exit 1
+fi
 
 echo "Conda environment: $CONDA_DEFAULT_ENV"
 echo "Python path: $(which python)"
@@ -31,7 +37,7 @@ echo "Working directory: $(pwd)"
 # -------------------------------------------------
 # Run your training script
 # -------------------------------------------------
-python -m flat.train_flat
+python -u -m flat.train_flat
 
 echo "=== Training finished at $(date) ==="
 
@@ -40,7 +46,7 @@ echo "=== Training finished at $(date) ==="
 # -------------------------------------------------
 if [ $? -eq 0 ]; then
     echo "=== Starting flat testing at $(date) ==="
-    python -m flat.test_flat
+    python -u -m flat.test_flat
     echo "=== Testing finished at $(date) ==="
 else
     echo "=== Training failed — skipping testing ==="

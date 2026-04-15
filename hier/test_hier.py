@@ -187,6 +187,7 @@ def run_variant(name, unfreeze_from, model_root, crops, diseases_by_crop,
         )
 
         fold_summaries = []
+        model = HierResNet18Concat(crops, diseases_by_crop, unfreeze_from=unfreeze_from)
 
         for fold in range(1, N_FOLDS + 1):
             fold_path = model_root / f"fold{fold}" / "best_model.pth"
@@ -198,7 +199,6 @@ def run_variant(name, unfreeze_from, model_root, crops, diseases_by_crop,
             fold_dir = region_save / f"fold{fold}"
             fold_dir.mkdir(parents=True, exist_ok=True)
 
-            model   = HierResNet18Concat(crops, diseases_by_crop, unfreeze_from=unfreeze_from)
             summary = evaluate_region_fold(
                 model, fold_path, dl, device, fold_dir, crops, global_labels
             )

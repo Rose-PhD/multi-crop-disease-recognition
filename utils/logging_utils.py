@@ -13,6 +13,7 @@ Usage
 """
 
 import logging
+import sys
 from pathlib import Path
 
 
@@ -47,8 +48,8 @@ def setup_logger(name: str, log_file: str | Path) -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # console handler — INFO and above
-    ch = logging.StreamHandler()
+    # console handler — INFO and above (stdout so SLURM captures it in .out)
+    ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
 
