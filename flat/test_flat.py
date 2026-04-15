@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-"""
-TESTING: FLAT RESNET-18 BASELINE (JOINT CROP+DISEASE LABELS)
-
-Multi-region evaluation across all trained variants discovered from MODEL_BASE.
-"""
-
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -58,16 +51,15 @@ def discover_configs(model_base):
 
 
 # fold evaluation
-def evaluate_region_fold(model, model_path, loader, device, fold_dir,
-                         crops, global_labels, global_to_crop_dis, crop_to_global_ids):
+def evaluate_region_fold(model, model_path, loader, device, fold_dir, crops, global_labels, global_to_crop_dis, crop_to_global_ids):
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
 
-    true_crop_all, pred_crop_all          = [], []
-    true_global_all                       = []
-    pred_global_pred_crop_all             = []
-    pred_global_true_crop_all             = []
+    true_crop_all, pred_crop_all = [], []
+    true_global_all = []
+    pred_global_pred_crop_all = []
+    pred_global_true_crop_all = []
     per_crop_results = {ci: {"true": [], "pred": []} for ci in range(len(crops))}
 
     with torch.no_grad():
@@ -75,8 +67,8 @@ def evaluate_region_fold(model, model_path, loader, device, fold_dir,
             if batch is None:
                 continue
             imgs, yc, _, yg_global = batch
-            imgs      = imgs.to(device)
-            yc        = yc.to(device)
+            imgs = imgs.to(device)
+            yc = yc.to(device)
             yg_global = yg_global.to(device)
 
             logits = model(imgs)
@@ -103,7 +95,7 @@ def evaluate_region_fold(model, model_path, loader, device, fold_dir,
                     per_crop_results[ci_true]["true"].append(gi_true)
                     per_crop_results[ci_true]["pred"].append(gi_oracle)
 
-    crop_acc              = accuracy_score(true_crop_all, pred_crop_all)              if true_crop_all  else 0.0
+    crop_acc = accuracy_score(true_crop_all, pred_crop_all) if true_crop_all  else 0.0
     disease_acc_pred_crop = accuracy_score(true_global_all, pred_global_pred_crop_all) if true_global_all else 0.0
     disease_acc_true_crop = accuracy_score(true_global_all, pred_global_true_crop_all) if true_global_all else 0.0
 
@@ -112,19 +104,34 @@ def evaluate_region_fold(model, model_path, loader, device, fold_dir,
     pd.DataFrame(cm_crop, index=crops, columns=crops).to_csv(fold_dir / "cm_crop.csv")
 
     if true_global_all:
-        cm_pred = confusion_matrix(true_global_all, pred_global_pred_crop_all,
-                                   labels=list(range(len(global_labels))))
-        plot_cm(cm_pred, global_labels, fold_dir / "cm_disease_pred_crop.png",
-                "Disease Confusion Matrix (Pred Joint Class)")
-        pd.DataFrame(cm_pred, index=global_labels, columns=global_labels).to_csv(
+        cm_pred = confusion_matrix(
+            true_global_all, pred_global_pred_crop_all, 
+            labels=list(range(len(global_labels)))
+            )
+        plot_cm(
+            cm_pred, 
+            global_labels, 
+            fold_dir / "cm_disease_pred_crop.png", "Disease Confusion Matrix (Pred Joint Class)"
+        )
+        pd.DataFrame(
+            cm_pred, index=global_labels, 
+            columns=global_labels).to_csv(
             fold_dir / "cm_disease_pred_crop.csv"
         )
 
-        cm_true = confusion_matrix(true_global_all, pred_global_true_crop_all,
-                                   labels=list(range(len(global_labels))))
-        plot_cm(cm_true, global_labels, fold_dir / "cm_disease_true_crop.png",
-                "Disease Confusion Matrix (Oracle Crop Mask)")
-        pd.DataFrame(cm_true, index=global_labels, columns=global_labels).to_csv(
+        cm_true = confusion_matrix(
+            true_global_all, 
+            pred_global_true_crop_all,
+            labels=list(range(len(global_labels)))
+            )
+        
+        plot_cm(
+            cm_true, 
+            global_labels, fold_dir / "cm_disease_true_crop.png",
+            "Disease Confusion Matrix (Oracle Crop Mask)"
+            )
+        pd.DataFrame(
+            cm_true, index=global_labels, columns=global_labels).to_csv(
             fold_dir / "cm_disease_true_crop.csv"
         )
 

@@ -29,6 +29,20 @@ cd /home/nalwangar/wilfred/multi-crop-disease-recognition
 # -------------------------------------------------
 python -m flat.train_flat
 
+echo "=== Training finished at $(date) ==="
+
+# -------------------------------------------------
+# Run testing (only if training succeeded)
+# -------------------------------------------------
+if [ $? -eq 0 ]; then
+    echo "=== Starting flat testing at $(date) ==="
+    python -m flat.test_flat
+    echo "=== Testing finished at $(date) ==="
+else
+    echo "=== Training failed — skipping testing ==="
+    exit 1
+fi
+
 echo "=== Job finished at $(date) ==="
 
 
