@@ -6,8 +6,8 @@
 #SBATCH -t 24:00:00            # time limit
 #SBATCH -J train_resnet18      # job name
 
-#SBATCH --output=/home/nalwangar/wilfred/logs_hierY/slurm_train_out_%j.out
-#SBATCH --error=/home/nalwangar/wilfred/logs_hierY/slurm_train_err_%j.err
+#SBATCH --output=/home/nalwangar/wilfred/logs_FlatY/slurm_train_out_%j.out
+#SBATCH --error=/home/nalwangar/wilfred/logs_FlatY/slurm_train_err_%j.err
 
 echo "=== Job started on $(hostname) at $(date) ==="
 
